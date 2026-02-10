@@ -134,8 +134,12 @@ struct WeatherDataRecord
 """
 
 import argparse
+import datetime
 import struct
 from pathlib import Path
+
+import weewx
+import weewx.drivers.vantage
 
 
 class DayIndex:
@@ -174,7 +178,7 @@ weather_data_record = [
     ('B', 'interval'),  # In minutes
     ('B', 'iconFlags'),
     ('B', 'moreFlags'),
-    ('h', 'packedTime'),  # Minutes past midnight
+    ('h', 'packed_time'),  # Minutes past midnight
     ('h', 'outTemp'),  # tenths of a degree F
     ('h', 'highOutTemp'),  # tenths of a degree F
     ('h', 'lowOutTemp'),  # tenths of a degree F
@@ -188,7 +192,7 @@ weather_data_record = [
     ('h', 'windGust'),  # tenths of an MPH
     ('B', 'windDir'),  # direction code (0-15, 255)
     ('B', 'windGustDir'),  # direction code (0-15, 255)
-    ('h', 'numWindSamples'),  # number of valid ISS packets containing wind data
+    ('h', 'wind_samples'),  # number of valid ISS packets containing wind data
     ('h', 'radiation'),  # Watts per meter squared
     ('h', 'highRadiation'),  # Watts per meter squared
     ('B', 'UV'),  # tenth of a UV Index
@@ -244,6 +248,9 @@ weather_data_struct = struct.Struct('<' + ''.join(weather_data_formats))
 header_formats, header_names = zip(*header_block)
 header_struct = struct.Struct('<' + ''.join(header_formats))
 
+VANTAGE_MODEL_TYPE = 2
+VANTAGE_ISS_ID = 1
+
 
 def wlk_generator(path: Path):
     # Figure out year and month from filename:
@@ -276,6 +283,7 @@ def wlk_generator(path: Path):
             print(day_index)
 
         n = 0
+        # Now march through each day of the month.
         for day in range(1, 31):
             assert day_indexes[day].day_in_month == day
             if day_indexes[day].records_in_day == 0:
@@ -290,26 +298,53 @@ def wlk_generator(path: Path):
             while True:
                 if n >= day_indexes[day].records_in_day:
                     break
-                record_data = fd.read(88)
-                if len(record_data) < 88:
+                record_buffer = fd.read(88)
+                if len(record_buffer) < 88:
                     break
 
                 # The first byte identifies the record type
-                record_type = record_data[0]
+                record_type = record_buffer[0]
 
                 if record_type == 1:
-                    # Weather data record
-                    values = weather_data_struct.unpack(record_data)
-                    value_dict = dict(zip(weather_data_names, values))
+                    # Weather data record. Unpack the buffer.
+                    data_tuple = weather_data_struct.unpack(record_buffer)
+                    raw_value_dict = dict(zip(weather_data_names, data_tuple))
+                    # Decode and convert to physical units
+                    archive_record = decode_record(raw_value_dict)
+                    archive_record['dateTime'] = decode_time(year, month, day,
+                                                             raw_value_dict['packed_time'])
+                    yield archive_record
                     n += 1
-                    value_dict['n'] = n
-                    yield value_dict
                 elif record_type in [2, 3]:
                     # Daily summary record, ignore
                     continue
                 else:
                     # Unknown record type
                     raise ValueError(f"Unknown record type {record_type}")
+
+
+def decode_time(year: int, month: int, day: int, packed_time: int) -> int:
+    """Convert a packed time into unix epoch time."""
+    if not 0 <= packed_time <= 1440:
+        raise ValueError(f"Invalid packed time: {packed_time}")
+    dt = datetime.datetime(year, month, day, 0, 0, 0) + datetime.timedelta(minutes=packed_time)
+    return int(dt.timestamp())
+
+
+def decode_record(raw_value_dict: dict) -> dict:
+    archive_record = {
+        'usUnits': weewx.US,
+        # Divide archive interval by 60 to keep consistent with wview
+        'interval': int(raw_value_dict['interval']),
+
+    }
+    archive_record['rxCheckPercent'] = weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
+                                                                      archive_record['interval'],
+                                                                      VANTAGE_ISS_ID,
+                                                                      raw_value_dict[
+                                                                          'wind_samples'])
+
+    return archive_record
 
 
 def main():
