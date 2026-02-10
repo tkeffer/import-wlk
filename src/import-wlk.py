@@ -131,6 +131,22 @@ struct WeatherDataRecord
    BYTE extraTemp[7];         // (whole degrees F) + 90
    BYTE extraHum[7];          // whole percent
 };
+
+The rain collector type is encoded in the most significant nibble of the rain field.
+rainCollectorType = (rainCode & 0xF000);
+rainClicks = (rainCode & 0x0FFF);
+
+Type		rainCollectorType
+0.1 inch	0x0000
+0.01 inch	0x1000
+0.2 mm		0x2000
+1.0 mm		0x3000
+0.1 mm		0x6000 (not fully supported)
+
+Use the rainCollectorType to interpret the hiRainRate field. For example, if you have
+a 0.01 in rain collector, a rain rate value of 19 = 0.19 in/hr = 4.8 mm/hr, but if you have
+a 0.2 mm rain collector, a rain rate value of 19 = 3.8 mm/hr = 0.15 in/hr.
+
 """
 
 import argparse
@@ -193,8 +209,8 @@ weather_data_record = [
     ('B', 'windDir'),  # direction code (0-15, 255)
     ('B', 'windGustDir'),  # direction code (0-15, 255)
     ('h', 'wind_samples'),  # number of valid ISS packets containing wind data
-    ('h', 'radiation'),  # Watts per meter squared
-    ('h', 'highRadiation'),  # Watts per meter squared
+    ('H', 'radiation'),  # Watts per meter squared
+    ('H', 'highRadiation'),  # Watts per meter squared
     ('B', 'UV'),  # tenth of a UV Index
     ('B', 'highUV'),  # tenth of a UV Index
     ('B', 'leafTemp1'),  # (whole degrees F) + 90
@@ -251,6 +267,34 @@ header_struct = struct.Struct('<' + ''.join(header_formats))
 VANTAGE_MODEL_TYPE = 2
 VANTAGE_ISS_ID = 1
 
+
+def decode_rain(raw_archive_record: dict, key: str) -> float | None:
+    rain_collector_type = (raw_archive_record[key] & 0xF000)
+    rain_clicks = (raw_archive_record[key] & 0x0FFF)
+    if rain_collector_type == 0x0000:
+        bucket_size = 0.1
+    elif rain_collector_type == 0x1000:
+        bucket_size = 0.01
+    elif rain_collector_type == 0x2000:
+        bucket_size = 0.007874
+    elif rain_collector_type == 0x3000:
+        bucket_size = 0.0393701
+    else:
+        raise ValueError(f"Unknown rain collector type: {rain_collector_type}")
+    return rain_clicks * bucket_size
+
+
+# Make a copy of the archive map, so we can modify it without affecting the original
+archive_map = weewx.drivers.vantage._archive_map.copy()
+archive_map['inHumidity'] = lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None
+archive_map['outHumidity'] = lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None
+archive_map['windSpeed'] = lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None
+archive_map['windGust'] = lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None
+archive_map['rain'] = decode_rain
+archive_map['hiRainRate'] = decode_rain
+
+
+# TODO: radiation is not right. Is the 'dash' value 0x8000?
 
 def wlk_generator(path: Path):
     # Figure out year and month from filename:
@@ -331,23 +375,33 @@ def decode_time(year: int, month: int, day: int, packed_time: int) -> int:
     return int(dt.timestamp())
 
 
-def decode_record(raw_value_dict: dict) -> dict:
+def decode_record(raw_archive_record: dict) -> dict:
     archive_record = {
         'usUnits': weewx.US,
         # Divide archive interval by 60 to keep consistent with wview
-        'interval': int(raw_value_dict['interval']),
+        'interval': int(raw_archive_record['interval']),
 
     }
     archive_record['rxCheckPercent'] = weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
                                                                       archive_record['interval'],
                                                                       VANTAGE_ISS_ID,
-                                                                      raw_value_dict[
+                                                                      raw_archive_record[
                                                                           'wind_samples'])
+    for obs_type in raw_archive_record:
+        # Get the mapping function for this type. If there is no such
+        # function, supply a lambda function that will just return None
+        func = archive_map.get(obs_type, lambda p, k: None)
+        # Call the function:
+        val = func(raw_archive_record, obs_type)
+        # Skip all null values
+        if val is not None:
+            archive_record[obs_type] = val
 
     return archive_record
 
 
 def main():
+    from weeutil.weeutil import timestamp_to_string
     parser = argparse.ArgumentParser(
         description="Read .WLK weather files and print weather data records.")
     parser.version = "1.0"
@@ -357,7 +411,7 @@ def main():
     for filename in args.wlk_files:
         path = Path(filename)
         for record in wlk_generator(path):
-            print(record)
+            print(timestamp_to_string(record['dateTime']), record)
 
 
 if __name__ == "__main__":
