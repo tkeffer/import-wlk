@@ -1,0 +1,6 @@
+[project]
+name = "import-wlk"
+version = "0.1.0"
+description = "Import a .WLK weather file into sqlite, using wview schema"
+requires-python = ">=3.12"
+dependencies = []
