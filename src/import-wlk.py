@@ -154,6 +154,7 @@ import argparse
 import datetime
 import struct
 from pathlib import Path
+from collections.abc import Iterator
 
 import weewx
 import weewx.drivers.vantage
@@ -162,10 +163,11 @@ import weewx.drivers.vantage
 class DayIndex:
     """Represents a day index in the header block of a .WLK file."""
 
+    day_index_struct = struct.Struct('<hi')
+
     def __init__(self, byte_values: bytes, day_in_month: int):
-        records_in_day, start_pos = struct.unpack('<hi', byte_values)
-        self.records_in_day = records_in_day
-        self.start_pos = start_pos
+        # Unpack the byte array
+        self.records_in_day, self.start_pos = self.day_index_struct.unpack(byte_values)
         self.day_in_month = day_in_month
 
     def __str__(self):
@@ -272,8 +274,19 @@ VANTAGE_MODEL_TYPE = 2
 VANTAGE_ISS_ID = 1
 
 
+def decode_time(year: int, month: int, day: int, packed_time: int) -> int:
+    """Convert a packed time into unix epoch time."""
+    if not 0 <= packed_time <= 1440:
+        raise ValueError(f"Invalid packed time: {packed_time}")
+    dt = datetime.datetime(year, month, day, 0, 0, 0) + datetime.timedelta(minutes=packed_time)
+    return int(dt.timestamp())
+
+
 def decode_rain(raw_archive_record: dict, key: str) -> float | None:
+    """Decode the rain field from a raw archive record."""
+    # Collector type is in the upper nibble
     rain_collector_type = (raw_archive_record[key] & 0xF000)
+    # Clicks in the lower 3 nibbles
     rain_clicks = (raw_archive_record[key] & 0x0FFF)
     if rain_collector_type == 0x0000:
         bucket_size = 0.1
@@ -286,6 +299,32 @@ def decode_rain(raw_archive_record: dict, key: str) -> float | None:
     else:
         raise ValueError(f"Unknown rain collector type: {rain_collector_type}")
     return rain_clicks * bucket_size
+
+
+def decode_record(raw_archive_record: dict) -> dict:
+    """Convert the record with raw values into a dictionary with physical units"""
+    archive_record = {
+        'usUnits': weewx.US,
+        # Divide archive interval by 60 to keep consistent with wview
+        'interval': int(raw_archive_record['interval']),
+    }
+    archive_record['rxCheckPercent'] = \
+        weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
+                                       archive_record['interval'],
+                                       VANTAGE_ISS_ID,
+                                       raw_archive_record['wind_samples'])
+
+    for obs_type in raw_archive_record:
+        # Get the mapping function for this type. If there is no such
+        # function, supply a lambda function that will just return None
+        func = archive_map.get(obs_type, lambda p, k: None)
+        # Call the function:
+        val = func(raw_archive_record, obs_type)
+        # Skip all null values
+        if val is not None:
+            archive_record[obs_type] = val
+
+    return archive_record
 
 
 # Make a copy of the archive map, so we can modify it without affecting the original. Then add
@@ -301,8 +340,10 @@ archive_map['hiRainRate'] = decode_rain
 
 # TODO: radiation is not right. Is the 'dash' value 0x8000?
 
-def wlk_generator(path: Path):
-    # Figure out year and month from filename:
+def gen_wlk(path: Path) -> Iterator[dict]:
+    """Generator function that reads a .WLK file and yields archive records."""
+
+    # Figure out year and month from the filename:
     year_str, month_str = path.stem.split('-')
     year, month = int(year_str), int(month_str)
 
@@ -324,12 +365,10 @@ def wlk_generator(path: Path):
         total_records = header_values[1]
 
         # Element 2 through 33 are day indexes. There will be 32 of them, but the first one is not
-        # actually used. The rest represent information about each day of the month (up to 31 of them).
+        # used. The rest represent information about each day of the month (up to 31 of them).
         day_indexes = []
         for i in range(32):
             day_indexes.append(DayIndex(header_values[2 + i], i))
-        for day_index in day_indexes:
-            print(day_index)
 
         # Now march through each day of the month.
         for day in range(1, 31):
@@ -337,15 +376,14 @@ def wlk_generator(path: Path):
             if day_indexes[day].records_in_day == 0:
                 continue
 
-            # The starting position is the number of *records* (not bytes) in. So, multiply
-            # by the record size, which is 88. We also have to add in the size of the header.
+            # The starting position of the buffer is the number of *records* (not bytes) in. To
+            # find the number of bytes in multiply by the record size, which is 88. We also have
+            # to add in the size of the header.
             fd.seek(88 * day_indexes[day].start_pos + header_struct.size)
 
             # Now read each record in the day. Stop when we reach the number of records in the day.
             n = 0
-            while True:
-                if n >= day_indexes[day].records_in_day:
-                    break
+            while n < day_indexes[day].records_in_day:
                 record_buffer = fd.read(88)
                 if len(record_buffer) < 88:
                     break
@@ -372,51 +410,47 @@ def wlk_generator(path: Path):
                     raise ValueError(f"Unknown record type {record_type}")
 
 
-def decode_time(year: int, month: int, day: int, packed_time: int) -> int:
-    """Convert a packed time into unix epoch time."""
-    if not 0 <= packed_time <= 1440:
-        raise ValueError(f"Invalid packed time: {packed_time}")
-    dt = datetime.datetime(year, month, day, 0, 0, 0) + datetime.timedelta(minutes=packed_time)
-    return int(dt.timestamp())
-
-
-def decode_record(raw_archive_record: dict) -> dict:
-    archive_record = {
-        'usUnits': weewx.US,
-        # Divide archive interval by 60 to keep consistent with wview
-        'interval': int(raw_archive_record['interval']),
-
-    }
-    archive_record['rxCheckPercent'] = \
-        weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
-                                       archive_record['interval'],
-                                       VANTAGE_ISS_ID,
-                                       raw_archive_record['wind_samples'])
-    for obs_type in raw_archive_record:
-        # Get the mapping function for this type. If there is no such
-        # function, supply a lambda function that will just return None
-        func = archive_map.get(obs_type, lambda p, k: None)
-        # Call the function:
-        val = func(raw_archive_record, obs_type)
-        # Skip all null values
-        if val is not None:
-            archive_record[obs_type] = val
-
-    return archive_record
-
-
 def main():
-    from weeutil.weeutil import timestamp_to_string
+    import csv
+    import sys
     parser = argparse.ArgumentParser(
-        description="Read .WLK weather files and print weather data records.")
+        description="Read .WLK weather files and save weather data records to a CSV file.")
     parser.version = "1.0"
     parser.add_argument("wlk_files", nargs='+', help="Input .WLK files")
+    parser.add_argument("--output", help="Output CSV file. If not specified, print to stdout.")
     args = parser.parse_args()
 
+    all_records = []
+    fieldnames = set()
     for filename in args.wlk_files:
         path = Path(filename)
-        for record in wlk_generator(path):
-            print(timestamp_to_string(record['dateTime']), record)
+        for record in gen_wlk(path):
+            all_records.append(record)
+            fieldnames.update(record.keys())
+
+    if not all_records:
+        return
+
+    print(f"Read {len(all_records)} records from {len(args.wlk_files)} files.")
+
+    # Sort the fieldnames to have a consistent order.
+    # Put 'dateTime' first if it exists.
+    sorted_fieldnames = sorted(list(fieldnames))
+    if 'dateTime' in sorted_fieldnames:
+        sorted_fieldnames.remove('dateTime')
+        sorted_fieldnames.insert(0, 'dateTime')
+
+    if args.output:
+        with open(args.output, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=sorted_fieldnames)
+            writer.writeheader()
+            for record in all_records:
+                writer.writerow(record)
+    else:
+        writer = csv.DictWriter(sys.stdout, fieldnames=sorted_fieldnames)
+        writer.writeheader()
+        for record in all_records:
+            writer.writerow(record)
 
 
 if __name__ == "__main__":
