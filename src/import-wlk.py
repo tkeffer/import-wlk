@@ -148,6 +148,7 @@ a 0.01 in rain collector, a rain rate value of 19 = 0.19 in/hr = 4.8 mm/hr, but 
 a 0.2 mm rain collector, a rain rate value of 19 = 3.8 mm/hr = 0.15 in/hr.
 
 """
+from __future__ import annotations
 
 import argparse
 import datetime
@@ -159,7 +160,9 @@ import weewx.drivers.vantage
 
 
 class DayIndex:
-    def __init__(self, byte_values, day_in_month):
+    """Represents a day index in the header block of a .WLK file."""
+
+    def __init__(self, byte_values: bytes, day_in_month: int):
         records_in_day, start_pos = struct.unpack('<hi', byte_values)
         self.records_in_day = records_in_day
         self.start_pos = start_pos
@@ -173,7 +176,7 @@ class DayIndex:
 header_block = [
     ('16s', 'idCode'),  # = {'W', 'D', 'A', 'T', '5', '.', '0', 0, 0, 0, 0, 0, 0, 0, 5, 0}
     ('I', 'totalRecords'),
-    ('6s' * 32, 'dayIndex')  # Collapses all the dayIndex structs, which we don't use
+    ('6s' * 32, 'dayIndex')  # The 32 day indexes
 ]
 
 # Needs to be 88 bytes long:
@@ -260,6 +263,7 @@ weather_data_record = [
 
 weather_data_formats, weather_data_names = zip(*weather_data_record)
 weather_data_struct = struct.Struct('<' + ''.join(weather_data_formats))
+assert weather_data_struct.size == 88
 
 header_formats, header_names = zip(*header_block)
 header_struct = struct.Struct('<' + ''.join(header_formats))
@@ -276,15 +280,16 @@ def decode_rain(raw_archive_record: dict, key: str) -> float | None:
     elif rain_collector_type == 0x1000:
         bucket_size = 0.01
     elif rain_collector_type == 0x2000:
-        bucket_size = 0.007874
+        bucket_size = 0.007874  # = 0.2 mm
     elif rain_collector_type == 0x3000:
-        bucket_size = 0.0393701
+        bucket_size = 0.0393701  # = 1.0 mm
     else:
         raise ValueError(f"Unknown rain collector type: {rain_collector_type}")
     return rain_clicks * bucket_size
 
 
-# Make a copy of the archive map, so we can modify it without affecting the original
+# Make a copy of the archive map, so we can modify it without affecting the original. Then add
+# any specialized mappings.
 archive_map = weewx.drivers.vantage._archive_map.copy()
 archive_map['inHumidity'] = lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None
 archive_map['outHumidity'] = lambda p, k: float(p[k]) / 10.0 if p[k] != 0xff else None
@@ -326,7 +331,6 @@ def wlk_generator(path: Path):
         for day_index in day_indexes:
             print(day_index)
 
-        n = 0
         # Now march through each day of the month.
         for day in range(1, 31):
             assert day_indexes[day].day_in_month == day
@@ -355,6 +359,7 @@ def wlk_generator(path: Path):
                     raw_value_dict = dict(zip(weather_data_names, data_tuple))
                     # Decode and convert to physical units
                     archive_record = decode_record(raw_value_dict)
+                    # Add the time stamp
                     archive_record['dateTime'] = decode_time(year, month, day,
                                                              raw_value_dict['packed_time'])
                     yield archive_record
@@ -382,11 +387,11 @@ def decode_record(raw_archive_record: dict) -> dict:
         'interval': int(raw_archive_record['interval']),
 
     }
-    archive_record['rxCheckPercent'] = weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
-                                                                      archive_record['interval'],
-                                                                      VANTAGE_ISS_ID,
-                                                                      raw_archive_record[
-                                                                          'wind_samples'])
+    archive_record['rxCheckPercent'] = \
+        weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
+                                       archive_record['interval'],
+                                       VANTAGE_ISS_ID,
+                                       raw_archive_record['wind_samples'])
     for obs_type in raw_archive_record:
         # Get the mapping function for this type. If there is no such
         # function, supply a lambda function that will just return None
