@@ -44,5 +44,10 @@ This allows you to monitor the files as they get imported.
 
 5. When finished, be sure to set `station_type` back to its original setting. 
 
+## Licensing
 
-- set schema
+WeeWX is licensed under the GNU Public License v3.
+
+## Copyright
+
+© 2009-2026 Thomas Keffer, Matthew Wall, and Gary Roderick
