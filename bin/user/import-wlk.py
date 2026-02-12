@@ -152,12 +152,23 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import glob
+import os.path
 import struct
-from pathlib import Path
+import sys
 from collections.abc import Iterator
+from pathlib import Path
+from typing import Iterable, List
 
+import weeutil.weeutil
 import weewx
+import weewx.drivers
 import weewx.drivers.vantage
+
+
+def loader(config_dict, engine):
+    wlk_config = config_dict.get('WLK', {})
+    return WLKDriver(wlk_config)
 
 
 class DayIndex:
@@ -408,6 +419,52 @@ def gen_wlk(path: Path) -> Iterator[dict]:
                 else:
                     # Unknown record type
                     raise ValueError(f"Unknown record type {record_type}")
+
+
+class WLKDriver(weewx.drivers.AbstractDevice):
+    def __init__(self, wlk_config: dict):
+        # Get the list of WLK files to use
+        wlk_files = weeutil.weeutil.option_as_list(wlk_config.get('wlk_files', []))
+        # Expand any environment variables and the '~' symbol
+        self.wlk_files = find_files(wlk_files)
+
+    def genLoopPackets(self):
+        sys.exit("WLK driver does not support loop packets.")
+
+    def genArchiveRecords(self, since_ts: int | float | None) -> Iterator[dict]:
+        for path in self.wlk_files:
+            yield from gen_wlk(path)
+        sys.exit("WLK driver done.")
+
+    @property
+    def hardware_name(self) -> str:
+        return "WLK pseudo-device"
+
+
+def find_files(inputs: Iterable[str]) -> List[Path]:
+    """
+    Find and return a list of files from the given input paths. This function processes the
+    provided paths, expanding user home directories and environment variables, resolving glob
+    patterns, and checking for valid file paths. It logs a warning for non-file or
+    non-existent paths.
+
+    Parameters:
+        inputs (Iterable[str]): An iterable of input paths or glob patterns to search for files.
+
+    Returns:
+        List[Path]: A sorted list of validated Paths
+    """
+    seen = set()
+    for inp in inputs:
+        # Expand user home and env vars
+        inp = os.path.expanduser(os.path.expandvars(inp))
+        # Expand glob patterns, then scan for valid files
+        for c in glob.glob(inp):
+            if os.path.isfile(c):
+                seen.add(Path(c))
+            else:
+                print(f"Warning: {c} is not a file or does not exist. Ignored")
+    return sorted(list(seen))
 
 
 def main():
