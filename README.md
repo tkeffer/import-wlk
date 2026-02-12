@@ -1,8 +1,8 @@
 # WLK importer
 
-This extension can import WLK files into WeeWX. It works by emulating a driver.
-This has the advantage of subjecting the imported data to the same processing
-pipeline as real data, including any extensions.
+This extension imports WLK files into WeeWX by emulating a driver. This has the
+advantage of subjecting the imported data to the same processing pipeline as
+real data, including any extensions.
 
 ## Prerequisites
 
@@ -11,25 +11,36 @@ pipeline as real data, including any extensions.
 
 ## Installing the extension
 
-### Run the installer
+### Copy your configuration file
 
-The extension is installed like any other WeeWX extension:
+This extension requires modifying your `weewx.conf` file. Rather tha modify your
+only copy of the file, it's safer to make a copy, then use that.
 
 ```shell
-weectl extension install https://github.com/tkeffer/weewx-wlk/archive/refs/heads/master.zip 
+cp ~/weewx-data/weewx.conf /var/tmp/weewx.conf
+```
+
+### Run the installer
+
+The extension is installed like any other WeeWX extension, except that you
+should use the config file created above:
+
+```shell
+weectl extension --config=/var/tmp/weewx.conf install https://github.com/tkeffer/weewx-wlk/archive/refs/heads/master.zip 
 ```
 
 ### Configure the extension
 
 1. Stop `weewxd`.
 
-2. Edit `weewx.conf` to temporaily set the driver to the importer. Under the
+2. Edit the copy of `weewx.conf` to set the driver to the WLK importer. Under the
 `[Station]` stanza, change the line `station_type` so it reads:
 
        station_type = WLK
 
-3. In the `[WLK]` stanza, set option `wlk_files` to the pathway to the WLK file(s) that you intend to
-import. Wildcards can be used. The tilde symbol (`~`) can be used. For example:
+3. In the `[WLK]` stanza, set option `wlk_files` to the pathway to the WLK
+   file(s) that you intend to import. Wildcards can be used. The tilde symbol
+   (`~`) can also be used. For example:
 
     ```
    [WLK]
@@ -37,12 +48,14 @@ import. Wildcards can be used. The tilde symbol (`~`) can be used. For example:
    ```
 
    In this example, all WLK files with 2018 dates would be imported.  Substitute
-   the actual pathway.
+   as necessary.
 
-4. Run `weewxd` [directly from the command line](https://www.weewx.com/docs/5.2/usersguide/running/#running-directly).
-This allows you to monitor the files as they get imported.
+4. Run `weewxd` [directly from the command line](https://www.weewx.com/docs/5.2/usersguide/running/#running-directly), 
+using the config file that you created. Typically, this looks like:
 
-5. When finished, be sure to set `station_type` back to its original setting. 
+       weewxd --config=/var/tmp/weewx.conf
+
+    Monitor the output to make sure that the import is successful.
 
 ## Licensing
 
