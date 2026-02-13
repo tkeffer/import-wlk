@@ -21,6 +21,12 @@ CONFIG = """
     # environment variables, and '~'.
     wlk_files = ~/path-to-wlk/*.wlk
     
+    # Set to the type of Vantage model you have.
+    # 1=Vantage Pro; 2=Vantage Pro2 or VantageVue
+    vantage_model = 2
+    # Set to the ISS ID of your station.
+    vantage_iss_id = 1
+    
     driver = user.import-wlk
 """
 

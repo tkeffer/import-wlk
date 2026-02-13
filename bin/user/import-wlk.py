@@ -169,7 +169,7 @@ import weeutil.weeutil
 import weewx
 import weewx.drivers
 import weewx.drivers.vantage
-
+from weeutil.weeutil import to_int
 
 def loader(config_dict, _):
     if 'WLK' not in config_dict:
@@ -322,7 +322,7 @@ def decode_rain(raw_archive_record: dict, key: str) -> float:
     return rain_clicks * bucket_size
 
 
-def decode_record(raw_archive_record: dict) -> dict:
+def decode_record(raw_archive_record: dict, vantage_model, vantage_iss_id) -> dict:
     """Convert the record with raw values into a dictionary with physical units"""
     archive_record = {
         'usUnits': weewx.US,
@@ -330,9 +330,9 @@ def decode_record(raw_archive_record: dict) -> dict:
         'interval': int(raw_archive_record['interval']),
     }
     archive_record['rxCheckPercent'] = \
-        weewx.drivers.vantage._rxcheck(VANTAGE_MODEL_TYPE,
+        weewx.drivers.vantage._rxcheck(vantage_model,
                                        archive_record['interval'],
-                                       VANTAGE_ISS_ID,
+                                       vantage_iss_id,
                                        raw_archive_record['wind_samples'])
 
     for obs_type in raw_archive_record:
@@ -361,7 +361,7 @@ archive_map['hiRainRate'] = decode_rain
 
 # TODO: radiation is not right. Is the 'dash' value 0x8000?
 
-def gen_wlk(path: Path) -> Iterator[dict]:
+def gen_wlk(path: Path, vantage_model: int = 2, vantage_iss_id: int = 1) -> Iterator[dict]:
     """Generator function that reads a .WLK file and yields archive records."""
 
     # Figure out year and month from the filename:
@@ -417,7 +417,7 @@ def gen_wlk(path: Path) -> Iterator[dict]:
                     data_tuple = weather_data_struct.unpack(record_buffer)
                     raw_value_dict = dict(zip(weather_data_names, data_tuple))
                     # Decode and convert to physical units
-                    archive_record = decode_record(raw_value_dict)
+                    archive_record = decode_record(raw_value_dict, vantage_model, vantage_iss_id)
                     # Add the time stamp
                     archive_record['dateTime'] = decode_time(year, month, day,
                                                              raw_value_dict['packed_time'])
@@ -437,16 +437,18 @@ class WLKDriver(weewx.drivers.AbstractDevice):
         wlk_files = weeutil.weeutil.option_as_list(wlk_config.get('wlk_files', []))
         # Expand any environment variables and the '~' symbol
         self.wlk_files = find_files(wlk_files)
+        self.vantage_model = to_int(wlk_config.get('vantage_model', 2))
+        self.vantage_iss_id = to_int(wlk_config.get('vantage_iss_id', 1))
 
     def genLoopPackets(self):
         raise NotImplementedError("WLK import complete. Ignore this exception.")
 
-    def genArchiveRecords(self, since_ts: Optional[Union[int, float]]) -> Iterator[dict]:
+    def genArchiveRecords(self, since_ts):
         for path in self.wlk_files:
-            yield from gen_wlk(path)
+            yield from gen_wlk(path, self.vantage_model, self.vantage_iss_id)
 
     @property
-    def hardware_name(self) -> str:
+    def hardware_name(self):
         return "WLK pseudo-device"
 
 
@@ -484,20 +486,24 @@ def main():
     parser.version = "1.0"
     parser.add_argument("wlk_files", nargs='+', help="Input .WLK files")
     parser.add_argument("--output", help="Output CSV file. If not specified, print to stdout.")
+    parser.add_argument("--model", dest='vantage_model', type=int, default=2,
+                        help="Vantage model type (1=Pro, 2=Pro2 or Vue)")
+    parser.add_argument("--iss-id", dest='vantage_iss_id', type=int, default=1,
+                        help="Vantage ISS ID")
     args = parser.parse_args()
 
     all_records = []
     fieldnames = set()
-    for filename in args.wlk_files:
+    for filename in find_files(args.wlk_files):
         path = Path(filename)
-        for record in gen_wlk(path):
+        for record in gen_wlk(path, args.vantage_model, args.vantage_iss_id):
             all_records.append(record)
             fieldnames.update(record.keys())
 
     if not all_records:
         return
 
-    print(f"Read {len(all_records)} records from {len(args.wlk_files)} files.")
+    print(f"Read {len(all_records)} records.")
 
     # Sort the fieldnames to have a consistent order.
     # Put 'dateTime' first if it exists.
