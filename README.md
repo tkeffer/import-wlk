@@ -58,7 +58,7 @@ weectl extension --config=/var/tmp/weewx.conf install https://github.com/tkeffer
    Monitor the output to make sure that the import is successful. When the import
    is complete, it will end with a not-implemented error that looks like this:
 
-        NotImplementedError: WLK import complete. Ignore this exception.
+       NotImplementedError: WLK import complete. Ignore this exception.
 
    This is the normal end of the import process.
     
