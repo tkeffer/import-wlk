@@ -50,12 +50,19 @@ weectl extension --config=/var/tmp/weewx.conf install https://github.com/tkeffer
    In this example, all WLK files with 2018 dates would be imported.  Substitute
    as necessary.
 
-4. Run `weewxd` [directly from the command line](https://www.weewx.com/docs/5.2/usersguide/running/#running-directly), 
-using the config file that you created. Typically, this looks like:
+4. Run `weewxd` [directly from the command line](https://www.weewx.com/docs/5.2/usersguide/running/#running-directly),
+   using the config file that you created. Typically, this looks like:
 
        weewxd --config=/var/tmp/weewx.conf
 
-    Monitor the output to make sure that the import is successful.
+   Monitor the output to make sure that the import is successful. When the import
+   is complete, it will end with a not-implemented error that looks like this:
+
+        NotImplementedError: WLK import complete. Ignore this exception.
+
+   This is the normal end of the import process.
+    
+5. Restart `weewxd`. 
 
 ## Licensing
 

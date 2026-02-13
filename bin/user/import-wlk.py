@@ -155,10 +155,9 @@ import datetime
 import glob
 import os.path
 import struct
-import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Iterable
 from pathlib import Path
-from typing import Iterable, List
+from typing import Optional, Union
 
 import weeutil.weeutil
 import weewx
@@ -166,7 +165,7 @@ import weewx.drivers
 import weewx.drivers.vantage
 
 
-def loader(config_dict, engine):
+def loader(config_dict, _):
     wlk_config = config_dict.get('WLK', {})
     return WLKDriver(wlk_config)
 
@@ -293,7 +292,7 @@ def decode_time(year: int, month: int, day: int, packed_time: int) -> int:
     return int(dt.timestamp())
 
 
-def decode_rain(raw_archive_record: dict, key: str) -> float | None:
+def decode_rain(raw_archive_record: dict, key: str) -> float:
     """Decode the rain field from a raw archive record."""
     # Collector type is in the upper nibble
     rain_collector_type = (raw_archive_record[key] & 0xF000)
@@ -429,19 +428,18 @@ class WLKDriver(weewx.drivers.AbstractDevice):
         self.wlk_files = find_files(wlk_files)
 
     def genLoopPackets(self):
-        sys.exit("WLK driver does not support loop packets.")
+        raise NotImplementedError("WLK import complete. Ignore this exception.")
 
-    def genArchiveRecords(self, since_ts: int | float | None) -> Iterator[dict]:
+    def genArchiveRecords(self, since_ts: Optional[Union[int, float]]) -> Iterator[dict]:
         for path in self.wlk_files:
             yield from gen_wlk(path)
-        sys.exit("WLK driver done.")
 
     @property
     def hardware_name(self) -> str:
         return "WLK pseudo-device"
 
 
-def find_files(inputs: Iterable[str]) -> List[Path]:
+def find_files(inputs: Iterable[str]) -> list[Path]:
     """
     Find and return a list of files from the given input paths. This function processes the
     provided paths, expanding user home directories and environment variables, resolving glob
