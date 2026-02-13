@@ -1,6 +1,12 @@
-"""Import WLK data, then export as CSV files
+#
+#    Copyright (c) 2009-2026 Tom Keffer <tkeffer@gmail.com>
+#
+#    See the file LICENSE.txt for your full rights.
+#
+"""Import WLK data into WeeWX by emulating a driver.
 
-According to the WeatherLink "readme" file, the following describes the structure of a .WLK file
+According to the Davis WeatherLink "readme" file, the following describes the structure of a .WLK
+file:
 
 //   Data is stored in monthly files.  Each file has the following header.
 struct DayIndex
@@ -166,13 +172,16 @@ import weewx.drivers.vantage
 
 
 def loader(config_dict, _):
-    wlk_config = config_dict.get('WLK', {})
-    return WLKDriver(wlk_config)
+    if 'WLK' not in config_dict:
+        raise weewx.UnsupportedFeature("WLK driver requires a 'WLK' section "
+                                       "in the configuration file.")
+    return WLKDriver(config_dict['WLK'])
 
 
 class DayIndex:
     """Represents a day index in the header block of a .WLK file."""
 
+    # Compile the structure:
     day_index_struct = struct.Struct('<hi')
 
     def __init__(self, byte_values: bytes, day_in_month: int):
@@ -185,6 +194,7 @@ class DayIndex:
                 f"# of records {self.records_in_day}")
 
 
+# Represents the whole header block of a .WLK file.
 header_block = [
     ('16s', 'idCode'),  # = {'W', 'D', 'A', 'T', '5', '.', '0', 0, 0, 0, 0, 0, 0, 0, 5, 0}
     ('I', 'totalRecords'),
@@ -280,6 +290,7 @@ assert weather_data_struct.size == 88
 header_formats, header_names = zip(*header_block)
 header_struct = struct.Struct('<' + ''.join(header_formats))
 
+# TODO: should be possible to set these in the configuration file
 VANTAGE_MODEL_TYPE = 2
 VANTAGE_ISS_ID = 1
 

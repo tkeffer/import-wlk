@@ -14,10 +14,11 @@ real data, including any extensions.
 ### Copy your configuration file
 
 This extension requires modifying your `weewx.conf` file. Rather tha modify your
-only copy of the file, it's safer to make a copy, then use that.
+only copy of the file, it's safer to make a copy, then use that. For example:
 
 ```shell
-cp ~/weewx-data/weewx.conf /var/tmp/weewx.conf
+cd ~/weewx-data
+cp weewx.conf weewx-import.conf 
 ```
 
 ### Run the installer
@@ -26,7 +27,7 @@ The extension is installed like any other WeeWX extension, except that you
 should use the config file created above:
 
 ```shell
-weectl extension --config=/var/tmp/weewx.conf install https://github.com/tkeffer/weewx-wlk/archive/refs/heads/master.zip 
+weectl extension --config=~/weewx-data/weewx-import.conf install https://github.com/tkeffer/weewx-wlk/archive/refs/heads/master.zip 
 ```
 
 ### Configure the extension
@@ -53,7 +54,7 @@ weectl extension --config=/var/tmp/weewx.conf install https://github.com/tkeffer
 4. Run `weewxd` [directly from the command line](https://www.weewx.com/docs/5.2/usersguide/running/#running-directly),
    using the config file that you created. Typically, this looks like:
 
-       weewxd --config=/var/tmp/weewx.conf
+       weewxd --config=~/weewx-data/weewx-import.conf
 
    Monitor the output to make sure that the import is successful. When the import
    is complete, it will end with a not-implemented error that looks like this:
